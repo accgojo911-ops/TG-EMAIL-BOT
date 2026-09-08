@@ -15,7 +15,7 @@ def home():
     return "Garena Bot is Alive!", 200
 
 def run_flask():
-    port = int(os.environ.get('PORT', 8080))
+    port = int(os.environ.get('PORT', 1826))
     app.run(host='0.0.0.0', port=port)
 
 # ----------------- Keep-Alive Ping System -----------------
@@ -32,7 +32,7 @@ def keep_alive():
             print(f"Keep-Alive Ping Failed: {e}")
 
 # ----------------- Bot Configurations -----------------
-API_TOKEN = '8939638878:AAF3MsM3mm5NuD7iHEEzaNSIJD1zMCGAaHo'
+API_TOKEN = '8939638878:AAEdhJ47enDDF9_kpb1xeg133o-oG3OBztg'
 bot = telebot.TeleBot(API_TOKEN)
 
 REQUIRED_CHANNELS = [
@@ -55,7 +55,6 @@ USER_VERIFY_CACHE = {}
 def is_user_joined(user_id):
     current_time = time.time()
     
-    # Check if user verification status is cached (Valid for 300 seconds)
     if user_id in USER_VERIFY_CACHE:
         cached_status, timestamp = USER_VERIFY_CACHE[user_id]
         if current_time - timestamp < 300:
@@ -78,7 +77,6 @@ def is_user_joined(user_id):
     USER_VERIFY_CACHE[user_id] = (True, current_time)
     return True
 
-# Helper Safe Sender for Anti-429 Protection
 def safe_send_message(chat_id, text, **kwargs):
     while True:
         try:
@@ -131,7 +129,6 @@ def verify_callback(call):
     except Exception:
         pass
 
-    # Clear cache to force fresh check on button click
     if call.from_user.id in USER_VERIFY_CACHE:
         del USER_VERIFY_CACHE[call.from_user.id]
 
@@ -206,6 +203,13 @@ def process_cancel(message):
 
 # ----------------- Execution Threading -----------------
 if __name__ == "__main__":
+    # Remove Webhook & Clear pending updates
+    try:
+        bot.remove_webhook(drop_pending_updates=True)
+        time.sleep(1)
+    except Exception as e:
+        print(f"Webhook clear status: {e}")
+
     server_thread = threading.Thread(target=run_flask)
     server_thread.daemon = True
     server_thread.start()
@@ -216,12 +220,12 @@ if __name__ == "__main__":
 
     while True:
         try:
-            print("Bot is running successfully...")
-            bot.infinity_polling(timeout=20, long_polling_timeout=10, skip_pending=True)
+            print("Bot is running successfully with new token...")
+            bot.polling(non_stop=True, interval=1, timeout=20)
         except ApiTelegramException as e:
             if e.error_code == 429:
                 retry_time = int(e.result_json.get('parameters', {}).get('retry_after', 10))
-                print(f"Rate limited by Telegram. Waiting for {retry_time} seconds...")
+                print(f"Rate limited. Waiting for {retry_time} seconds...")
                 time.sleep(retry_time)
             else:
                 time.sleep(3)
