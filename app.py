@@ -15,17 +15,15 @@ def home():
     return "Garena Bot is Alive!", 200
 
 def run_flask():
-    # Render dynamic PORT read or default 8080
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
 
 # ----------------- Keep-Alive Ping System -----------------
-# Render app URL to keep awake (Replace or set RENDER_EXTERNAL_URL env)
 RENDER_URL = os.environ.get('RENDER_EXTERNAL_URL', 'https://your-render-app-name.onrender.com')
 
 def keep_alive():
     while True:
-        time.sleep(120)  # Ping every 2 minutes (120 seconds)
+        time.sleep(120)
         try:
             if "your-render-app-name" not in RENDER_URL:
                 response = requests.get(RENDER_URL, timeout=10)
@@ -51,22 +49,48 @@ HEADERS = {
     "Accept-Encoding": "gzip"
 }
 
-# ----------------- Helper Functions -----------------
+# ----------------- In-Memory User Cache -----------------
+USER_VERIFY_CACHE = {}
+
 def is_user_joined(user_id):
+    current_time = time.time()
+    
+    # Check if user verification status is cached (Valid for 300 seconds)
+    if user_id in USER_VERIFY_CACHE:
+        cached_status, timestamp = USER_VERIFY_CACHE[user_id]
+        if current_time - timestamp < 300:
+            return cached_status
+
     for ch in REQUIRED_CHANNELS:
         try:
             member = bot.get_chat_member(ch["chat_id"], user_id)
             if member.status in ['left', 'kicked']:
+                USER_VERIFY_CACHE[user_id] = (False, current_time)
                 return False
         except ApiTelegramException as e:
             if e.error_code == 429:
-                retry_after = int(e.result_json.get('parameters', {}).get('retry_after', 5))
+                retry_after = int(e.result_json.get('parameters', {}).get('retry_after', 10))
                 time.sleep(retry_after)
             return False
         except Exception:
             return False
+
+    USER_VERIFY_CACHE[user_id] = (True, current_time)
     return True
 
+# Helper Safe Sender for Anti-429 Protection
+def safe_send_message(chat_id, text, **kwargs):
+    while True:
+        try:
+            return bot.send_message(chat_id, text, **kwargs)
+        except ApiTelegramException as e:
+            if e.error_code == 429:
+                retry_time = int(e.result_json.get('parameters', {}).get('retry_after', 5))
+                time.sleep(retry_time)
+            else:
+                raise e
+
+# ----------------- Keyboards -----------------
 def get_join_keyboard():
     markup = types.InlineKeyboardMarkup()
     for ch in REQUIRED_CHANNELS:
@@ -96,9 +120,9 @@ def start_cmd(message):
         for ch in REQUIRED_CHANNELS:
             text += f"- {ch['name']}\n"
         text += "\nAfter joining, click the button below to verify:"
-        bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=get_join_keyboard())
+        safe_send_message(message.chat.id, text, parse_mode="HTML", reply_markup=get_join_keyboard())
     else:
-        bot.send_message(message.chat.id, "Welcome to Garena Email Bot! Select an option from menu:", reply_markup=get_main_keyboard())
+        safe_send_message(message.chat.id, "Welcome to Garena Email Bot! Select an option from menu:", reply_markup=get_main_keyboard())
 
 @bot.callback_query_handler(func=lambda call: call.data == "verify_join")
 def verify_callback(call):
@@ -107,12 +131,16 @@ def verify_callback(call):
     except Exception:
         pass
 
+    # Clear cache to force fresh check on button click
+    if call.from_user.id in USER_VERIFY_CACHE:
+        del USER_VERIFY_CACHE[call.from_user.id]
+
     if is_user_joined(call.from_user.id):
         try:
             bot.delete_message(call.message.chat.id, call.message.message_id)
         except Exception:
             pass
-        bot.send_message(call.message.chat.id, "Verification Successful!", reply_markup=get_main_keyboard())
+        safe_send_message(call.message.chat.id, "Verification Successful!", reply_markup=get_main_keyboard())
     else:
         try:
             bot.answer_callback_query(call.id, "You haven't joined all required channels yet!", show_alert=True)
@@ -128,16 +156,16 @@ def handle_menu_click(message):
     text = message.text
 
     if text == "Check Platform":
-        msg = bot.send_message(message.chat.id, "Enter Access Token:")
+        msg = safe_send_message(message.chat.id, "Enter Access Token:")
         bot.register_next_step_handler(msg, process_check_platform)
     elif text == "Revoke Access Token":
-        msg = bot.send_message(message.chat.id, "Enter Access Token to Revoke:")
+        msg = safe_send_message(message.chat.id, "Enter Access Token to Revoke:")
         bot.register_next_step_handler(msg, process_revoke)
     elif text == "Cancel Recovery Email":
-        msg = bot.send_message(message.chat.id, "Enter Access Token:")
+        msg = safe_send_message(message.chat.id, "Enter Access Token:")
         bot.register_next_step_handler(msg, process_cancel)
     else:
-        bot.send_message(message.chat.id, f"Feature '{text}' is currently processing.")
+        safe_send_message(message.chat.id, f"Feature '{text}' is currently processing.")
 
 def process_check_platform(message):
     token = message.text.strip()
@@ -156,43 +184,40 @@ def process_check_platform(message):
                 resp_text += f"\n<b>Platform:</b> {m[p]}\n"
                 if uinfo.get('email'): resp_text += f"Email: {uinfo.get('email')}\n"
                 if uinfo.get('nickname'): resp_text += f"Name: {uinfo.get('nickname')}\n"
-        bot.send_message(message.chat.id, resp_text, parse_mode="HTML")
+        safe_send_message(message.chat.id, resp_text, parse_mode="HTML")
     else:
-        bot.send_message(message.chat.id, "Failed to fetch platform details.")
+        safe_send_message(message.chat.id, "Failed to fetch platform details.")
 
 def process_revoke(message):
     token = message.text.strip()
     url = f"https://100067.connect.garena.com/oauth/logout?access_token={token}"
     r = requests.get(url)
     if r.text.strip() == '{"result":0}':
-        bot.send_message(message.chat.id, "TOKEN REVOKED SUCCESSFULLY!")
+        safe_send_message(message.chat.id, "TOKEN REVOKED SUCCESSFULLY!")
     else:
-        bot.send_message(message.chat.id, f"Failed: {r.text}")
+        safe_send_message(message.chat.id, f"Failed: {r.text}")
 
 def process_cancel(message):
     token = message.text.strip()
     url = "https://100067.connect.garena.com/game/account_security/bind:cancel_request"
     payload = {'app_id': "100067", 'access_token': token}
     r = requests.post(url, data=payload, headers=HEADERS)
-    bot.send_message(message.chat.id, f"Response: {r.json()}")
+    safe_send_message(message.chat.id, f"Response: {r.json()}")
 
-# ----------------- Main Execution Threading -----------------
+# ----------------- Execution Threading -----------------
 if __name__ == "__main__":
-    # Start Flask Server in background thread
     server_thread = threading.Thread(target=run_flask)
     server_thread.daemon = True
     server_thread.start()
 
-    # Start Keep-Alive Ping System in background thread
     ping_thread = threading.Thread(target=keep_alive)
     ping_thread.daemon = True
     ping_thread.start()
 
-    # Run Telegram Bot
     while True:
         try:
             print("Bot is running successfully...")
-            bot.infinity_polling(timeout=10, long_polling_timeout=5, skip_pending=True)
+            bot.infinity_polling(timeout=20, long_polling_timeout=10, skip_pending=True)
         except ApiTelegramException as e:
             if e.error_code == 429:
                 retry_time = int(e.result_json.get('parameters', {}).get('retry_after', 10))
