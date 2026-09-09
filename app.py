@@ -41,12 +41,11 @@ REQUIRED_CHANNELS = [
     {"name": "RFG Like Group", "url": "https://t.me/RFG_GAMER_CHAT", "chat_id": "@RFG_GAMER_CHAT"}
 ]
 
+# Standard headers matching Termux functional requests
 HEADERS = {
-    "User-Agent": "GarenaMSDK/4.0.41(TECNO KJ5 ;Android 13;en;HK;app 1.123.1 2019120270;)",
-    "Content-Type": "application/x-www-form-urlencoded",
-    "Accept": "application/json",
-    "Connection": "Keep-Alive",
-    "Accept-Encoding": "gzip"
+    'User-Agent': "GarenaMSDK/4.0.41(TECNO KJ5 ;Android 13;en;HK;app 1.123.1 2019120270;)",
+    'Connection': "Keep-Alive",
+    'Accept-Encoding': "gzip"
 }
 
 USER_VERIFY_CACHE = {}
@@ -244,13 +243,15 @@ def step_add_token(message):
     
     url = "https://100067.connect.garena.com/game/account_security/bind:send_otp"
     payload = {'app_id': "100067", 'access_token': token, 'email': email, 'locale': "en_MA"}
-    r = requests.post(url, data=payload, headers=HEADERS)
+    hr = {'User-Agent': "GarenaMSDK/4.0.41(TECNO KJ5 ;Android 13;en;HK;app 1.123.1 2019120270;)", 'Connection': "Keep-Alive", 'Accept': "application/json", 'Accept-Encoding': "gzip"}
+    
+    r = requests.post(url, data=payload, headers=hr)
     if r.status_code == 200:
         USER_DATA[message.chat.id]['token'] = token
         msg = safe_send_message(message.chat.id, "✓ OTP Sent!\n- Enter OTP:", reply_markup=get_back_keyboard())
         bot.register_next_step_handler(msg, step_add_verify_otp)
     else:
-        safe_send_message(message.chat.id, "❌ Bad Response! Failed to send OTP.", reply_markup=get_main_keyboard())
+        safe_send_message(message.chat.id, "- Bad Response No OTP Get!", reply_markup=get_main_keyboard())
 
 def step_add_verify_otp(message):
     if message.text == "🔙 Back To Main Menu": return handle_menu_click(message)
@@ -264,7 +265,7 @@ def step_add_verify_otp(message):
     if r.status_code == 200:
         auth = r.json().get("verifier_token")
         
-        # Cancel old request if any
+        # Cancel old request
         requests.post("https://100067.connect.garena.com/game/account_security/bind:cancel_request", 
                       data={'app_id': "100067", 'access_token': token}, headers=HEADERS)
         
@@ -278,7 +279,10 @@ def step_add_verify_otp(message):
             'email': email
         }
         r_bind = requests.post(url_bind, data=p_bind, headers=HEADERS)
-        safe_send_message(message.chat.id, f"🎉 Response:\n{r_bind.json()}\n\n✅ Successfully added {email} to account!", reply_markup=get_main_keyboard())
+        if r_bind.status_code == 200 and r_bind.json().get("result") == 0:
+            safe_send_message(message.chat.id, f"✅ Successfully Adding : {email} To Account!", reply_markup=get_main_keyboard())
+        else:
+            safe_send_message(message.chat.id, f"❌ Failed: {r_bind.json().get('error', 'Error adding email')}", reply_markup=get_main_keyboard())
     else:
         safe_send_message(message.chat.id, "❌ Invalid OTP or Request Failed.", reply_markup=get_main_keyboard())
 
@@ -295,14 +299,17 @@ def step_check_email(message):
         email_to_be = data.get("email_to_be", "")
         countdown = data.get("request_exec_countdown", 0)
         
-        res_msg = f"<b>Data:</b> <code>{data}</code>\n\n"
+        res_msg = ""
         if email == "" and email_to_be != "":
-            res_msg += f"📧 Email: {email_to_be}\n⏳ Confirmed in: {convert(countdown)}"
+            res_msg = f"📧 Email: {email_to_be}\n⏳ Confirmed in: {convert(countdown)}"
         elif email != "" and email_to_be == "":
-            res_msg += f"📧 Email: {email}\n✅ Confirmed: Yes Good!"
+            res_msg = f"📧 Email: {email}\n✅ Confirmed: Yes Good!"
         elif email == "" and email_to_be == "":
-            res_msg += "❌ No Email Bound!"
-        safe_send_message(message.chat.id, res_msg, parse_mode="HTML", reply_markup=get_main_keyboard())
+            res_msg = "❌ No IsTi3ada !"
+        else:
+            res_msg = "❌ No Email Bound!"
+            
+        safe_send_message(message.chat.id, res_msg, reply_markup=get_main_keyboard())
     else:
         safe_send_message(message.chat.id, f"❌ Error Code: {rsp.status_code}", reply_markup=get_main_keyboard())
 
@@ -347,9 +354,13 @@ def step_cancel_recovery(message):
     payload = {'app_id': "100067", 'access_token': token}
     r = requests.post(url, data=payload, headers=HEADERS)
     if r.status_code == 200:
-        safe_send_message(message.chat.id, f"✅ Response:\n{r.json()}", reply_markup=get_main_keyboard())
+        res = r.json()
+        if res.get("result") == 0:
+            safe_send_message(message.chat.id, "✅ Recovery Email Request Cancelled Successfully!", reply_markup=get_main_keyboard())
+        else:
+            safe_send_message(message.chat.id, "❌ Cancel Failed or No Active Request!", reply_markup=get_main_keyboard())
     else:
-        safe_send_message(message.chat.id, "❌ No Response or Error!", reply_markup=get_main_keyboard())
+        safe_send_message(message.chat.id, "❌ No Response!", reply_markup=get_main_keyboard())
 
 # ----------------- 5. Revoke Token Step -----------------
 def step_revoke_token(message):
@@ -358,9 +369,9 @@ def step_revoke_token(message):
     url = f"https://100067.connect.garena.com/oauth/logout?access_token={token}"
     r = requests.get(url)
     if r.text.strip() == '{"result":0}':
-        safe_send_message(message.chat.id, "🎉 TOKEN REVOKED SUCCESSFULLY!", reply_markup=get_main_keyboard())
+        safe_send_message(message.chat.id, "🎉 TOKEN REVOKED SUCCESSFULLY", reply_markup=get_main_keyboard())
     else:
-        safe_send_message(message.chat.id, f"Status: {r.status_code}\nResponse: {r.text}", reply_markup=get_main_keyboard())
+        safe_send_message(message.chat.id, "❌ Failed to Revoke Token!", reply_markup=get_main_keyboard())
 
 # ----------------- 6. Unbind Email Handlers -----------------
 def step_unbind_get_email(message):
@@ -381,10 +392,10 @@ def step_unbind_get_token(message):
         data = {"email": email, "locale": "en_MA", "region": "IND", "app_id": "100067", "access_token": token}
         r = requests.post(url, headers=HEADERS, data=data)
         if r.status_code == 200 and r.json().get("result") == 0:
-            msg = safe_send_message(message.chat.id, "✓ OTP Sent!\n- Enter OTP:", reply_markup=get_back_keyboard())
+            msg = safe_send_message(message.chat.id, "✓ OTP Sent\n- Enter OTP:", reply_markup=get_back_keyboard())
             bot.register_next_step_handler(msg, step_unbind_verify_otp)
         else:
-            safe_send_message(message.chat.id, f"✗ OTP Send Failed: {r.text}", reply_markup=get_main_keyboard())
+            safe_send_message(message.chat.id, "✗ OTP Send Failed", reply_markup=get_main_keyboard())
     elif method == '2':
         msg = safe_send_message(message.chat.id, "- Enter Secondary Password:", reply_markup=get_back_keyboard())
         bot.register_next_step_handler(msg, step_unbind_verify_sec_pass)
@@ -400,7 +411,7 @@ def step_unbind_verify_otp(message):
     if res.get("result") == 0 and res.get("identity_token"):
         process_final_unbind(message, res.get("identity_token"))
     else:
-        safe_send_message(message.chat.id, f"✗ Verification Failed: {res}", reply_markup=get_main_keyboard())
+        safe_send_message(message.chat.id, "✗ Verification Failed", reply_markup=get_main_keyboard())
 
 def step_unbind_verify_sec_pass(message):
     if message.text == "🔙 Back To Main Menu": return handle_menu_click(message)
@@ -413,7 +424,7 @@ def step_unbind_verify_sec_pass(message):
     if res.get("result") == 0 and res.get("identity_token"):
         process_final_unbind(message, res.get("identity_token"))
     else:
-        safe_send_message(message.chat.id, f"✗ Verification Failed: {res}", reply_markup=get_main_keyboard())
+        safe_send_message(message.chat.id, "✗ Verification Failed", reply_markup=get_main_keyboard())
 
 def process_final_unbind(message, identity_token):
     u_data = USER_DATA.get(message.chat.id, {})
@@ -422,9 +433,9 @@ def process_final_unbind(message, identity_token):
     r = requests.post(url, headers=HEADERS, data=data)
     res = r.json()
     if res.get("result") == 0:
-        safe_send_message(message.chat.id, f"✓ SUCCESS: Email Unbind Request Created!\nResponse: {res}", reply_markup=get_main_keyboard())
+        safe_send_message(message.chat.id, "✓ SUCCESS: Email Unbind Request Created!", reply_markup=get_main_keyboard())
     else:
-        safe_send_message(message.chat.id, f"✗ FAILED: {res}", reply_markup=get_main_keyboard())
+        safe_send_message(message.chat.id, "✗ FAILED: Unbind Request Failed", reply_markup=get_main_keyboard())
 
 # ----------------- 7. Change Bind Email Handlers -----------------
 def step_change_get_access(message):
@@ -451,10 +462,10 @@ def step_change_get_new_email(message):
         data = {'email': u_data['old_email'], 'locale': 'en_MA', 'region': 'IND', 'app_id': '100067', 'access_token': u_data['access']}
         r = requests.post(url, headers=HEADERS, data=data)
         if r.json().get("result") == 0:
-            msg = safe_send_message(message.chat.id, f"✓ OTP Sent to {u_data['old_email']}\n- Enter Old Email OTP:", reply_markup=get_back_keyboard())
+            msg = safe_send_message(message.chat.id, f"✓ OTP Sent to {u_data['old_email']}\n- Enter OTP:", reply_markup=get_back_keyboard())
             bot.register_next_step_handler(msg, step_change_verify_old_otp)
         else:
-            safe_send_message(message.chat.id, f"✗ Failed to send OTP: {r.text}", reply_markup=get_main_keyboard())
+            safe_send_message(message.chat.id, "✗ Failed to send OTP", reply_markup=get_main_keyboard())
             
     elif method == '2':
         msg = safe_send_message(message.chat.id, "- Enter Secondary Password:", reply_markup=get_back_keyboard())
@@ -472,7 +483,7 @@ def step_change_verify_old_otp(message):
         USER_DATA[message.chat.id]['identity_token'] = res.get("identity_token")
         send_otp_to_new_email(message)
     else:
-        safe_send_message(message.chat.id, f"✗ Verification Failed: {res}", reply_markup=get_main_keyboard())
+        safe_send_message(message.chat.id, "✗ Verification Failed", reply_markup=get_main_keyboard())
 
 def step_change_verify_sec_pass(message):
     if message.text == "🔙 Back To Main Menu": return handle_menu_click(message)
@@ -486,7 +497,7 @@ def step_change_verify_sec_pass(message):
         USER_DATA[message.chat.id]['identity_token'] = res.get("identity_token")
         send_otp_to_new_email(message)
     else:
-        safe_send_message(message.chat.id, f"✗ Verification Failed: {res}", reply_markup=get_main_keyboard())
+        safe_send_message(message.chat.id, "✗ Verification Failed", reply_markup=get_main_keyboard())
 
 def send_otp_to_new_email(message):
     u_data = USER_DATA[message.chat.id]
@@ -494,10 +505,10 @@ def send_otp_to_new_email(message):
     data = {'email': u_data['new_email'], 'locale': 'en_MA', 'region': 'IND', 'app_id': '100067', 'access_token': u_data['access']}
     r = requests.post(url, headers=HEADERS, data=data)
     if r.json().get("result") == 0:
-        msg = safe_send_message(message.chat.id, f"✓ OTP Sent to {u_data['new_email']}\n- Enter New Email OTP:", reply_markup=get_back_keyboard())
+        msg = safe_send_message(message.chat.id, f"✓ OTP Sent to {u_data['new_email']}\n- Enter OTP:", reply_markup=get_back_keyboard())
         bot.register_next_step_handler(msg, step_change_verify_new_otp)
     else:
-        safe_send_message(message.chat.id, f"✗ Failed to send OTP to new email: {r.text}", reply_markup=get_main_keyboard())
+        safe_send_message(message.chat.id, "✗ Failed to send OTP to new email", reply_markup=get_main_keyboard())
 
 def step_change_verify_new_otp(message):
     if message.text == "🔙 Back To Main Menu": return handle_menu_click(message)
@@ -509,7 +520,6 @@ def step_change_verify_new_otp(message):
     res = r.json()
     verifier_token = res.get("verifier_token")
     if verifier_token:
-        # Finalize Rebind
         url_rebind = "https://100067.connect.garena.com/game/account_security/bind:create_rebind_request"
         data_final = {
             'identity_token': u_data['identity_token'],
@@ -523,9 +533,9 @@ def step_change_verify_new_otp(message):
         if res_final.get("result") == 0:
             safe_send_message(message.chat.id, "✓ SUCCESS: Rebind Created Successfully!", reply_markup=get_main_keyboard())
         else:
-            safe_send_message(message.chat.id, f"✗ FAILED: {res_final}", reply_markup=get_main_keyboard())
+            safe_send_message(message.chat.id, "✗ FAILED: Rebind Failed", reply_markup=get_main_keyboard())
     else:
-        safe_send_message(message.chat.id, f"✗ New Email Verification Failed: {res}", reply_markup=get_main_keyboard())
+        safe_send_message(message.chat.id, "✗ New Email Verification Failed", reply_markup=get_main_keyboard())
 
 # ----------------- Execution Threading -----------------
 if __name__ == "__main__":
@@ -545,7 +555,7 @@ if __name__ == "__main__":
 
     while True:
         try:
-            print("Bot is running successfully with complete logic...")
+            print("Bot is running successfully...")
             bot.polling(non_stop=True, interval=1, timeout=20)
         except ApiTelegramException as e:
             if e.error_code == 429:
