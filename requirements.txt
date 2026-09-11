@@ -2,3 +2,4 @@ pyTelegramBotAPI
 python-telegram-bot
 Flask
 requests
+curl_cffi
