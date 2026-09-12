@@ -29,7 +29,7 @@ from telegram.ext import (
 # ============================================================
 # BOT TOKEN & CONFIG
 # ============================================================
-BOT_TOKEN = "8939638878:AAEj4ghQStgygTE6TMCJVfDXi730ju67SvQ"
+BOT_TOKEN = "8939638878:AAHztEjYIPba7vCLi1W-7dCkHCJEHPQOL9s"
 ADMIN_ID = 123456789 
 
 REQUIRED_CHANNELS = [
